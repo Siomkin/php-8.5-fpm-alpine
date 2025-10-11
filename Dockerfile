@@ -62,7 +62,7 @@ RUN apk add --no-cache \
         libwebp-dev \
         linux-headers \
     && chmod +x /usr/local/bin/install-php-extensions \
-    && install-php-extensions bcmath exif gd gmp intl mysqli pcntl pdo_mysql pdo_pgsql sockets xsl zip \
+    && install-php-extensions bcmath exif gd gmp intl mysqli pcntl pdo_mysql pdo_pgsql redis sockets xsl zip \
     && if [ "$INSTALL_XDEBUG" = "true" ]; then \
         curl -L https://xdebug.org/files/xdebug-3.5.0alpha2.tgz | tar -xz && \
         cd xdebug-3.5.0alpha2 && \
