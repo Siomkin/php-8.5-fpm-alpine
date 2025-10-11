@@ -30,6 +30,7 @@ jobs:
       image_digest: ${{ steps.build-and-push.outputs.digest }}
       image_metadata: ${{ steps.build-and-push.outputs.metadata }}
       image_tags: ${{ steps.meta.outputs.tags }}
+      image_id: ${{ steps.build-and-push.outputs.imageid }}
 
     steps:
       - name: Checkout code
@@ -78,6 +79,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
+          load: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=prod
@@ -101,6 +103,7 @@ jobs:
       image_digest: ${{ steps.build-and-push.outputs.digest }}
       image_metadata: ${{ steps.build-and-push.outputs.metadata }}
       image_tags: ${{ steps.meta.outputs.tags }}
+      image_id: ${{ steps.build-and-push.outputs.imageid }}
 
     steps:
       - name: Checkout code
@@ -149,6 +152,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
+          load: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=dev
@@ -184,8 +188,22 @@ jobs:
         id: image-ref
         run: |
           TAGS='${{ needs.build-production.outputs.image_tags }}'
+          if [ -z "$TAGS" ]; then
+            echo "Error: No tags available from build job"
+            exit 1
+          fi
           IMAGE_REF=$(echo "$TAGS" | head -n1)
+          if [ -z "$IMAGE_REF" ]; then
+            echo "Error: Could not extract image reference from tags"
+            exit 1
+          fi
+          echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
+
+      - name: Pull production image
+        run: |
+          echo "Pulling image: ${{ steps.image-ref.outputs.image-ref }}"
+          docker pull ${{ steps.image-ref.outputs.image-ref }}
 
       - name: Comprehensive test suite (production)
         run: |
@@ -263,8 +281,22 @@ jobs:
         id: image-ref
         run: |
           TAGS='${{ needs.build-development.outputs.image_tags }}'
+          if [ -z "$TAGS" ]; then
+            echo "Error: No tags available from build job"
+            exit 1
+          fi
           IMAGE_REF=$(echo "$TAGS" | head -n1)
+          if [ -z "$IMAGE_REF" ]; then
+            echo "Error: Could not extract image reference from tags"
+            exit 1
+          fi
+          echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
+
+      - name: Pull development image
+        run: |
+          echo "Pulling image: ${{ steps.image-ref.outputs.image-ref }}"
+          docker pull ${{ steps.image-ref.outputs.image-ref }}
 
       - name: Comprehensive test suite (development)
         run: |
@@ -354,7 +386,16 @@ jobs:
           else
             TAGS='${{ needs.build-development.outputs.image_tags }}'
           fi
+          if [ -z "$TAGS" ]; then
+            echo "Error: No tags available from build job"
+            exit 1
+          fi
           IMAGE_REF=$(echo "$TAGS" | head -n1)
+          if [ -z "$IMAGE_REF" ]; then
+            echo "Error: Could not extract image reference from tags"
+            exit 1
+          fi
+          echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
 
       - name: Run Trivy vulnerability scanner
