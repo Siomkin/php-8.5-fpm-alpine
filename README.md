@@ -9,7 +9,7 @@ A lightweight Docker image based on Alpine Linux that includes PHP 8.5 FPM with 
 - **PHP 8.5.0RC2** with FPM
 - Alpine Linux based for minimal size
 - Common PHP extensions pre-installed
-- Xdebug for debugging (configurable)
+- Xdebug support (currently disabled due to compatibility issues with PHP 8.5)
 - Non-root user for security
 - Health check endpoint
 
