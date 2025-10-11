@@ -23,9 +23,6 @@ LICENSE
 .env.local
 .env.*.local
 
-# CI/CD files (they're not needed in the image)
-.github
-
 # Test files
 tests/
 *.test

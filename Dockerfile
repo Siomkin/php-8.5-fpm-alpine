@@ -69,18 +69,8 @@ RUN apk add --no-cache --virtual .build-deps \
         libwebp-dev \
         linux-headers \
     && chmod +x /usr/local/bin/install-php-extensions \
+    # NOTE: The 'redis' extension was removed from the list below as it is no longer needed
     && install-php-extensions bcmath exif gd gmp intl mysqli pcntl pdo_mysql pdo_pgsql sockets xsl zip \
-    && if [ "$INSTALL_XDEBUG" = "true" ]; then \
-        curl -L https://xdebug.org/files/xdebug-3.5.0alpha2.tgz | tar -xz && \
-        cd xdebug-3.5.0alpha2 && \
-        phpize && \
-        ./configure --enable-xdebug && \
-        make && \
-        make install && \
-        cd .. && \
-        rm -rf xdebug-3.5.0alpha2 && \
-        docker-php-ext-enable xdebug; \
-       fi \
     && apk del .build-deps \
     && rm -rf /var/cache/apk/*
 
