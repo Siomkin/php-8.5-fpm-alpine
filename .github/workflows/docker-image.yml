@@ -465,8 +465,10 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          TAGS='${{ needs.build-production.outputs.image_tags }}'
-          IMAGE_REF=$(echo "$TAGS" | head -n1)
+          # Reconstruct image reference from event context (production image)
+          TAG_NAME="${{ github.ref_name }}"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
+          echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
 
       - name: Run basic performance test
@@ -506,8 +508,6 @@ jobs:
           **Image:** `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}`
           **Tag:** `${{ github.ref_name }}`
           **Platforms:** linux/amd64, linux/arm64
-          **Production Digest:** `${{ needs.build-production.outputs.image_digest }}`
-          **Development Digest:** `${{ needs.build-development.outputs.image_digest }}`
 
           ### ✅ Completed Checks
           - Multi-stage build with separate production and development images
@@ -528,12 +528,12 @@ jobs:
           
           **Production (without Xdebug):**
           ```
-          ${{ needs.build-production.outputs.image_tags }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-prod
           ```
 
           **Development (with Xdebug):**
           ```
-          ${{ needs.build-development.outputs.image_tags }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           ```
 
           ### 🔧 Usage
