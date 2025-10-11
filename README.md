@@ -134,3 +134,9 @@ MIT License
 ## PHP 8.5 Features
 
 Learn about the new features and improvements in PHP 8.5 in our [PHP 8.5 Features Guide](./PHP-8.5-FEATURES.md).
+
+## Additional Documentation
+
+- [OPTIMIZATION-GUIDE.md](./OPTIMIZATION-GUIDE.md) - Detailed performance optimization documentation
+- [MIGRATION-GUIDE.md](./MIGRATION-GUIDE.md) - Guide for upgrading from previous versions
+- [SECURITY.md](./SECURITY.md) - Security policy and reporting guidelines
