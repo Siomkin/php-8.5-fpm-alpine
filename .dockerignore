@@ -1,0 +1,53 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# GitHub files
+.github
+
+# Documentation files
+*.md
+LICENSE
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Test files
+tests/
+*.test
+*.spec
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# Node.js files (if any)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Log files
+*.log
+logs/
+
+# Cache directories
+.npm
+.yarn
+.php_cs.cache
+
+# Build artifacts
+dist/
+build/
