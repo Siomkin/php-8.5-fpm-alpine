@@ -187,14 +187,22 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          TAGS='${{ needs.build-production.outputs.image_tags }}'
-          if [ -z "$TAGS" ]; then
-            echo "Error: No tags available from build job"
-            exit 1
-          fi
-          IMAGE_REF=$(echo "$TAGS" | head -n1)
-          if [ -z "$IMAGE_REF" ]; then
-            echo "Error: Could not extract image reference from tags"
+          # Construct image reference from metadata instead of using masked outputs
+          # The metadata-action generates predictable tags based on the event type
+          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # For tag pushes, use the tag name
+            TAG_NAME="${{ github.ref_name }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
+          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
+            # For branch pushes, use the branch name
+            BRANCH_NAME="${{ github.ref_name }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-prod"
+          elif [ "${{ github.event_name }}" == "schedule" ]; then
+            # For scheduled builds, use date
+            DATE_TAG=$(date +%Y%m%d)
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-prod"
+          else
+            echo "Error: Unexpected event type or ref"
             exit 1
           fi
           echo "Using image: $IMAGE_REF"
@@ -280,14 +288,22 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          TAGS='${{ needs.build-development.outputs.image_tags }}'
-          if [ -z "$TAGS" ]; then
-            echo "Error: No tags available from build job"
-            exit 1
-          fi
-          IMAGE_REF=$(echo "$TAGS" | head -n1)
-          if [ -z "$IMAGE_REF" ]; then
-            echo "Error: Could not extract image reference from tags"
+          # Construct image reference from metadata instead of using masked outputs
+          # The metadata-action generates predictable tags based on the event type
+          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # For tag pushes, use the tag name (no suffix for development)
+            TAG_NAME="${{ github.ref_name }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}"
+          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
+            # For branch pushes, use the branch name
+            BRANCH_NAME="${{ github.ref_name }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}"
+          elif [ "${{ github.event_name }}" == "schedule" ]; then
+            # For scheduled builds, use date
+            DATE_TAG=$(date +%Y%m%d)
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}"
+          else
+            echo "Error: Unexpected event type or ref"
             exit 1
           fi
           echo "Using image: $IMAGE_REF"
@@ -381,18 +397,34 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          if [ "${{ matrix.image_type }}" == "production" ]; then
-            TAGS='${{ needs.build-production.outputs.image_tags }}'
+          # Construct image reference from metadata instead of using masked outputs
+          # The metadata-action generates predictable tags based on the event type
+          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # For tag pushes, use the tag name
+            TAG_NAME="${{ github.ref_name }}"
+            if [ "${{ matrix.image_type }}" == "production" ]; then
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
+            else
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}"
+            fi
+          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
+            # For branch pushes, use the branch name
+            BRANCH_NAME="${{ github.ref_name }}"
+            if [ "${{ matrix.image_type }}" == "production" ]; then
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-prod"
+            else
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}"
+            fi
+          elif [ "${{ github.event_name }}" == "schedule" ]; then
+            # For scheduled builds, use date
+            DATE_TAG=$(date +%Y%m%d)
+            if [ "${{ matrix.image_type }}" == "production" ]; then
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-prod"
+            else
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}"
+            fi
           else
-            TAGS='${{ needs.build-development.outputs.image_tags }}'
-          fi
-          if [ -z "$TAGS" ]; then
-            echo "Error: No tags available from build job"
-            exit 1
-          fi
-          IMAGE_REF=$(echo "$TAGS" | head -n1)
-          if [ -z "$IMAGE_REF" ]; then
-            echo "Error: Could not extract image reference from tags"
+            echo "Error: Unexpected event type or ref"
             exit 1
           fi
           echo "Using image: $IMAGE_REF"
