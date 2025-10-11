@@ -69,7 +69,6 @@ RUN apk add --no-cache --virtual .build-deps \
         libwebp-dev \
         linux-headers \
     && chmod +x /usr/local/bin/install-php-extensions \
-    # NOTE: The 'redis' extension was removed from the list below as it is no longer needed
     && install-php-extensions bcmath exif gd gmp intl mysqli pcntl pdo_mysql pdo_pgsql sockets xsl zip \
     && apk del .build-deps \
     && rm -rf /var/cache/apk/*
