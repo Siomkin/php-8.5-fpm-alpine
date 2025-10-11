@@ -30,6 +30,7 @@ jobs:
       image_digest: ${{ steps.build-and-push.outputs.digest }}
       image_metadata: ${{ steps.build-and-push.outputs.metadata }}
       image_tags: ${{ steps.meta.outputs.tags }}
+      image_id: ${{ steps.build-and-push.outputs.imageid }}
 
     steps:
       - name: Checkout code
@@ -78,6 +79,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
+          load: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=prod
@@ -101,6 +103,7 @@ jobs:
       image_digest: ${{ steps.build-and-push.outputs.digest }}
       image_metadata: ${{ steps.build-and-push.outputs.metadata }}
       image_tags: ${{ steps.meta.outputs.tags }}
+      image_id: ${{ steps.build-and-push.outputs.imageid }}
 
     steps:
       - name: Checkout code
@@ -149,6 +152,7 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
+          load: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=dev
@@ -183,9 +187,31 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          TAGS='${{ needs.build-production.outputs.image_tags }}'
-          IMAGE_REF=$(echo "$TAGS" | head -n1)
+          # Construct image reference from metadata instead of using masked outputs
+          # The metadata-action generates predictable tags based on the event type
+          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # For tag pushes, use the tag name
+            TAG_NAME="${{ github.ref_name }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
+          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
+            # For branch pushes, use the branch name
+            BRANCH_NAME="${{ github.ref_name }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-prod"
+          elif [ "${{ github.event_name }}" == "schedule" ]; then
+            # For scheduled builds, use date
+            DATE_TAG=$(date +%Y%m%d)
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-prod"
+          else
+            echo "Error: Unexpected event type or ref"
+            exit 1
+          fi
+          echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
+
+      - name: Pull production image
+        run: |
+          echo "Pulling image: ${{ steps.image-ref.outputs.image-ref }}"
+          docker pull ${{ steps.image-ref.outputs.image-ref }}
 
       - name: Comprehensive test suite (production)
         run: |
@@ -262,9 +288,31 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          TAGS='${{ needs.build-development.outputs.image_tags }}'
-          IMAGE_REF=$(echo "$TAGS" | head -n1)
+          # Construct image reference from metadata instead of using masked outputs
+          # The metadata-action generates predictable tags based on the event type
+          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # For tag pushes, use the tag name (no suffix for development)
+            TAG_NAME="${{ github.ref_name }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}"
+          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
+            # For branch pushes, use the branch name
+            BRANCH_NAME="${{ github.ref_name }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}"
+          elif [ "${{ github.event_name }}" == "schedule" ]; then
+            # For scheduled builds, use date
+            DATE_TAG=$(date +%Y%m%d)
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}"
+          else
+            echo "Error: Unexpected event type or ref"
+            exit 1
+          fi
+          echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
+
+      - name: Pull development image
+        run: |
+          echo "Pulling image: ${{ steps.image-ref.outputs.image-ref }}"
+          docker pull ${{ steps.image-ref.outputs.image-ref }}
 
       - name: Comprehensive test suite (development)
         run: |
@@ -349,12 +397,37 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          if [ "${{ matrix.image_type }}" == "production" ]; then
-            TAGS='${{ needs.build-production.outputs.image_tags }}'
+          # Construct image reference from metadata instead of using masked outputs
+          # The metadata-action generates predictable tags based on the event type
+          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # For tag pushes, use the tag name
+            TAG_NAME="${{ github.ref_name }}"
+            if [ "${{ matrix.image_type }}" == "production" ]; then
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
+            else
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}"
+            fi
+          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
+            # For branch pushes, use the branch name
+            BRANCH_NAME="${{ github.ref_name }}"
+            if [ "${{ matrix.image_type }}" == "production" ]; then
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-prod"
+            else
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}"
+            fi
+          elif [ "${{ github.event_name }}" == "schedule" ]; then
+            # For scheduled builds, use date
+            DATE_TAG=$(date +%Y%m%d)
+            if [ "${{ matrix.image_type }}" == "production" ]; then
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-prod"
+            else
+              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}"
+            fi
           else
-            TAGS='${{ needs.build-development.outputs.image_tags }}'
+            echo "Error: Unexpected event type or ref"
+            exit 1
           fi
-          IMAGE_REF=$(echo "$TAGS" | head -n1)
+          echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
 
       - name: Run Trivy vulnerability scanner
@@ -392,8 +465,10 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          TAGS='${{ needs.build-production.outputs.image_tags }}'
-          IMAGE_REF=$(echo "$TAGS" | head -n1)
+          # Reconstruct image reference from event context (production image)
+          TAG_NAME="${{ github.ref_name }}"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
+          echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
 
       - name: Run basic performance test
@@ -433,8 +508,6 @@ jobs:
           **Image:** `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}`
           **Tag:** `${{ github.ref_name }}`
           **Platforms:** linux/amd64, linux/arm64
-          **Production Digest:** `${{ needs.build-production.outputs.image_digest }}`
-          **Development Digest:** `${{ needs.build-development.outputs.image_digest }}`
 
           ### ✅ Completed Checks
           - Multi-stage build with separate production and development images
@@ -455,12 +528,12 @@ jobs:
           
           **Production (without Xdebug):**
           ```
-          ${{ needs.build-production.outputs.image_tags }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-prod
           ```
 
           **Development (with Xdebug):**
           ```
-          ${{ needs.build-development.outputs.image_tags }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           ```
 
           ### 🔧 Usage
