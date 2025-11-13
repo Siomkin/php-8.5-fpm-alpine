@@ -39,6 +39,7 @@ RUN apk add --no-cache --update \
         gmp \
         icu-libs \
         jpeg \
+        libavif \
         libjpeg-turbo \
         libpng \
         libssh2 \
@@ -131,6 +132,7 @@ RUN apk add --no-cache --update \
         gmp \
         icu-libs \
         jpeg \
+        libavif \
         libjpeg-turbo \
         libpng \
         libssh2 \
