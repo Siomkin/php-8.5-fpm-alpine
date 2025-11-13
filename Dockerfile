@@ -44,6 +44,7 @@ RUN apk add --no-cache --update \
         libpng \
         libssh2 \
         libwebp \
+        libxpm \
         libxslt \
         libxml2 \
         libzip \
@@ -137,6 +138,7 @@ RUN apk add --no-cache --update \
         libpng \
         libssh2 \
         libwebp \
+        libxpm \
         libxslt \
         libxml2 \
         libzip \
