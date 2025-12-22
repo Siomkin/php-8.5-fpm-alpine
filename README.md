@@ -113,6 +113,27 @@ This image uses several optimization techniques:
 - **Layer caching**: Optimized layer ordering for better Docker cache utilization
 - **Pinned dependencies**: Uses specific versions (e.g., install-php-extensions v2.7.0) for reproducible builds
 
+## CI/CD Workflow
+
+The GitHub Actions workflow is optimized for fast builds:
+
+### Build Triggers
+
+| Trigger | Build Type | Platforms |
+|---------|------------|-----------|
+| **Pull Request** | Test build | `linux/amd64` only (fast) |
+| **Tag Push** | Full build + tests | `linux/amd64`, `linux/arm64` |
+| **Schedule** (weekly) | Full rebuild | `linux/amd64`, `linux/arm64` |
+| **Manual** | Full build | `linux/amd64`, `linux/arm64` |
+
+### Features
+
+- **Fast PR builds**: Only builds for Linux AMD64 (~5-7 min vs ~15-20 min)
+- **Multi-platform releases**: ARM64 support for Apple Silicon and ARM servers
+- **Separate images**: Production (no Xdebug) and Development (with Xdebug)
+- **Security scanning**: Trivy vulnerability scanning on tag releases
+- **Automated testing**: PHP extensions, Xdebug, FPM process, PHP 8.5 features verification
+
 ## Health Check
 
 The image includes a health check that verifies PHP-FPM is running correctly:
