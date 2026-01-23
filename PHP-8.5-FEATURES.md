@@ -130,7 +130,7 @@ While PHP 8.5 is largely backward compatible with PHP 8.4, there are a few thing
 
 ## Using PHP 8.5 Features in This Docker Image
 
-This Docker image comes with PHP 8.5.1 and all the necessary extensions to take advantage of these new features. You can start using them immediately in your applications.
+This Docker image comes with PHP 8.5.2 and all the necessary extensions to take advantage of these new features. You can start using them immediately in your applications.
 
 ### Example Docker Compose Configuration
 
