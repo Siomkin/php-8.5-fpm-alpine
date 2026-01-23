@@ -5,7 +5,7 @@ on:
     tags:
       - v*
   pull_request:
-    branches: [latest]
+    branches: [master]
   workflow_dispatch:
   schedule:
     # Weekly rebuild to get latest base image updates
@@ -17,8 +17,65 @@ env:
   DOCKER_BUILDKIT: 1
 
 jobs:
+  # Quick Linux-only test for pull requests
+  test-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.6.1
+
+      - name: Build test image (Linux only - Development)
+        uses: docker/build-push-action@v6.7.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: test-image:latest
+          cache-from: type=gha,scope=dev
+          cache-to: type=gha,mode=max,scope=dev
+          build-args: |
+            TZ=UTC
+            INSTALL_XDEBUG=true
+
+      - name: Test PHP version and extensions
+        run: |
+          echo "Testing PHP version..."
+          docker run --rm test-image:latest php -v
+
+          echo "Testing PHP extensions..."
+          docker run --rm test-image:latest php -m | grep -E "(bcmath|exif|gd|gmp|intl|mysqli|pcntl|pdo_mysql|pdo_pgsql|sockets|xsl|zip|xdebug)"
+
+          echo "Testing Xdebug..."
+          docker run --rm test-image:latest php -r "
+            if (extension_loaded('xdebug')) {
+              echo 'Xdebug is loaded\n';
+              echo 'Xdebug version: ' . phpversion('xdebug') . '\n';
+            } else {
+              echo 'ERROR: Xdebug is not loaded\n';
+              exit(1);
+            }
+          "
+
+          echo "Testing PHP 8.5 features..."
+          docker run --rm test-image:latest php -r "
+            class Test {
+              public string \$name {
+                set => \$value = trim(\$value);
+                get => strtoupper(\$this->name);
+              }
+            }
+            echo 'PHP 8.5 property hooks are working correctly\n';
+          "
+
   # Build production image (without Xdebug) - optimized for production use
   build-production:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -31,6 +88,7 @@ jobs:
       image_metadata: ${{ steps.build-and-push.outputs.metadata }}
       image_tags: ${{ steps.meta.outputs.tags }}
       image_id: ${{ steps.build-and-push.outputs.imageid }}
+      version_tag: ${{ steps.version-tag.outputs.tag }}
 
     steps:
       - name: Checkout code
@@ -47,12 +105,28 @@ jobs:
             image=moby/buildkit:latest
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3.3.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract version tag for dependent jobs
+        id: version-tag
+        run: |
+          # Extract version from tag (e.g., v8.5.1 from refs/tags/v8.5.1)
+          if [[ "${{ github.ref }}" =~ ^refs/tags/v(.*)$ ]]; then
+            VERSION_TAG="${BASH_REMATCH[1]}"
+            echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
+            echo "Version tag: ${VERSION_TAG}"
+          elif [[ "${{ github.ref }}" =~ ^refs/tags/(.*)$ ]]; then
+            VERSION_TAG="${BASH_REMATCH[1]}"
+            echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
+            echo "Version tag: ${VERSION_TAG}"
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "Version tag: latest"
+          fi
 
       - name: Extract metadata (production)
         id: meta
@@ -60,9 +134,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch,suffix=-prod
-            type=ref,event=pr,suffix=-prod
-            type=ref,event=tag,suffix=-prod
+            type=semver,pattern={{version}},suffix=-prod
+            type=match,pattern=v(.*),group=1,suffix=-prod
             type=raw,value=latest-prod,enable=${{ github.ref == 'refs/heads/latest' }}
             type=schedule,pattern={{date 'YYYYMMDD'}},suffix=-prod
           labels: |
@@ -78,7 +151,7 @@ jobs:
           context: .
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           load: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -92,6 +165,7 @@ jobs:
 
   # Build development image (with Xdebug) - optimized for development
   build-development:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -104,6 +178,7 @@ jobs:
       image_metadata: ${{ steps.build-and-push.outputs.metadata }}
       image_tags: ${{ steps.meta.outputs.tags }}
       image_id: ${{ steps.build-and-push.outputs.imageid }}
+      version_tag: ${{ steps.version-tag.outputs.tag }}
 
     steps:
       - name: Checkout code
@@ -120,12 +195,28 @@ jobs:
             image=moby/buildkit:latest
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3.3.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract version tag for dependent jobs
+        id: version-tag
+        run: |
+          # Extract version from tag (e.g., v8.5.1 from refs/tags/v8.5.1)
+          if [[ "${{ github.ref }}" =~ ^refs/tags/v(.*)$ ]]; then
+            VERSION_TAG="${BASH_REMATCH[1]}"
+            echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
+            echo "Version tag: ${VERSION_TAG}"
+          elif [[ "${{ github.ref }}" =~ ^refs/tags/(.*)$ ]]; then
+            VERSION_TAG="${BASH_REMATCH[1]}"
+            echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
+            echo "Version tag: ${VERSION_TAG}"
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+            echo "Version tag: latest"
+          fi
 
       - name: Extract metadata (development)
         id: meta
@@ -133,9 +224,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=match,pattern=v(.*),group=1
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/latest' }}
             type=schedule,pattern={{date 'YYYYMMDD'}}
           labels: |
@@ -151,7 +241,7 @@ jobs:
           context: .
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           load: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -163,12 +253,12 @@ jobs:
             TZ=UTC
             INSTALL_XDEBUG=true
 
-  # Parallel testing and security scanning - optimized for efficiency
+  # Comprehensive image testing (tags only)
   test-production:
     needs: build-production
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
       security-events: write
@@ -187,26 +277,14 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          # Construct image reference from metadata instead of using masked outputs
-          # The metadata-action generates predictable tags based on the event type
-          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            # For tag pushes, use the tag name
-            TAG_NAME="${{ github.ref_name }}"
-            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
-          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
-            # For branch pushes, use the branch name
-            BRANCH_NAME="${{ github.ref_name }}"
-            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-prod"
-          elif [ "${{ github.event_name }}" == "schedule" ]; then
-            # For scheduled builds, use date
-            DATE_TAG=$(date +%Y%m%d)
-            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-prod"
-          else
-            echo "Error: Unexpected event type or ref"
+          VERSION_TAG="${{ needs.build-production.outputs.version_tag }}"
+          if [ -z "$VERSION_TAG" ]; then
+            echo "ERROR: Version tag is empty!"
             exit 1
           fi
-          echo "Using image: $IMAGE_REF"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}-prod"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
+          echo "Using image: $IMAGE_REF"
 
       - name: Pull production image
         run: |
@@ -269,7 +347,7 @@ jobs:
     needs: build-development
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
       security-events: write
@@ -288,26 +366,14 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          # Construct image reference from metadata instead of using masked outputs
-          # The metadata-action generates predictable tags based on the event type
-          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            # For tag pushes, use the tag name (no suffix for development)
-            TAG_NAME="${{ github.ref_name }}"
-            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}"
-          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
-            # For branch pushes, use the branch name
-            BRANCH_NAME="${{ github.ref_name }}"
-            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}"
-          elif [ "${{ github.event_name }}" == "schedule" ]; then
-            # For scheduled builds, use date
-            DATE_TAG=$(date +%Y%m%d)
-            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}"
-          else
-            echo "Error: Unexpected event type or ref"
+          VERSION_TAG="${{ needs.build-development.outputs.version_tag }}"
+          if [ -z "$VERSION_TAG" ]; then
+            echo "ERROR: Version tag is empty!"
             exit 1
           fi
-          echo "Using image: $IMAGE_REF"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
+          echo "Using image: $IMAGE_REF"
 
       - name: Pull development image
         run: |
@@ -379,12 +445,12 @@ jobs:
           docker stop $CONTAINER_ID
           docker rm $CONTAINER_ID
 
-  # Security scanning - optimized with fail-fast
+  # Security scanning - optimized with fail-fast (tags only)
   security-scan:
     needs: [build-production, build-development]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
       security-events: write
@@ -397,35 +463,12 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          # Construct image reference from metadata instead of using masked outputs
-          # The metadata-action generates predictable tags based on the event type
-          if [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            # For tag pushes, use the tag name
-            TAG_NAME="${{ github.ref_name }}"
-            if [ "${{ matrix.image_type }}" == "production" ]; then
-              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
-            else
-              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}"
-            fi
-          elif [ "${{ github.event_name }}" == "push" ] && [[ "${{ github.ref }}" == refs/heads/* ]]; then
-            # For branch pushes, use the branch name
-            BRANCH_NAME="${{ github.ref_name }}"
-            if [ "${{ matrix.image_type }}" == "production" ]; then
-              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}-prod"
-            else
-              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}"
-            fi
-          elif [ "${{ github.event_name }}" == "schedule" ]; then
-            # For scheduled builds, use date
-            DATE_TAG=$(date +%Y%m%d)
-            if [ "${{ matrix.image_type }}" == "production" ]; then
-              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}-prod"
-            else
-              IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${DATE_TAG}"
-            fi
+          if [ "${{ matrix.image_type }}" == "production" ]; then
+            VERSION_TAG="${{ needs.build-production.outputs.version_tag }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}-prod"
           else
-            echo "Error: Unexpected event type or ref"
-            exit 1
+            VERSION_TAG="${{ needs.build-development.outputs.version_tag }}"
+            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}"
           fi
           echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
@@ -465,9 +508,8 @@ jobs:
       - name: Extract image reference
         id: image-ref
         run: |
-          # Reconstruct image reference from event context (production image)
-          TAG_NAME="${{ github.ref_name }}"
-          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG_NAME}-prod"
+          VERSION_TAG="${{ needs.build-production.outputs.version_tag }}"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}-prod"
           echo "Using image: $IMAGE_REF"
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
 
@@ -528,12 +570,12 @@ jobs:
           
           **Production (without Xdebug):**
           ```
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-prod
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-production.outputs.version_tag }}-prod
           ```
 
           **Development (with Xdebug):**
           ```
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-development.outputs.version_tag }}
           ```
 
           ### 🔧 Usage
