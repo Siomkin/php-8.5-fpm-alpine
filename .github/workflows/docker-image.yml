@@ -474,7 +474,7 @@ jobs:
           echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           image-ref: ${{ steps.image-ref.outputs.image-ref }}
           format: 'sarif'
@@ -488,7 +488,7 @@ jobs:
           category: 'trivy-${{ matrix.image_type }}'
 
       - name: Run Trivy for critical vulnerabilities
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           image-ref: ${{ steps.image-ref.outputs.image-ref }}
           format: 'table'
