@@ -1,5 +1,5 @@
 # Multi-stage build for optimized image size and build time
-FROM php:8.5.3-fpm-alpine AS builder
+FROM php:8.5.4-fpm-alpine AS builder
 
 ARG TZ=UTC
 ARG INSTALL_XDEBUG=true
@@ -93,7 +93,7 @@ RUN if [ "$INSTALL_XDEBUG" = "true" ]; then \
     fi
 
 # Final stage - runtime image
-FROM php:8.5.3-fpm-alpine
+FROM php:8.5.4-fpm-alpine
 
 ARG TZ=UTC
 ARG INSTALL_XDEBUG=true
