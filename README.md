@@ -8,13 +8,12 @@ A lightweight Docker image based on Alpine Linux that includes PHP 8.5 FPM with 
 
 - **PHP 8.5.4** with FPM
 - Alpine Linux based for minimal size
-- Common PHP extensions pre-installed
+- Common PHP extensions pre-installed (including OPcache and Redis)
 - **Xdebug support** (optional, enabled by default in development images)
-- **Multi-stage build** for optimized image size
 - **Separate production and development images** available
 - Non-root user for security
 - Health check endpoint
-- **Optimized build performance** with parallel compilation
+- Multi-architecture support (amd64, arm64)
 
 ## Quick Start
 
@@ -52,8 +51,11 @@ docker build -t siomkin/8.5-fpm-alpine .
 # Build the production image (without Xdebug, faster build)
 docker build --build-arg INSTALL_XDEBUG=false -t siomkin/8.5-fpm-alpine:prod .
 
-# Run with custom timezone
-docker run -d -p 9000:9000 --build-arg TZ=Europe/Moscow --name php-app siomkin/8.5-fpm-alpine
+# Build with custom system timezone (baked into the image)
+docker build --build-arg TZ=Europe/Minsk -t siomkin/8.5-fpm-alpine .
+
+# Or override PHP timezone at runtime (sets date.timezone ini)
+docker run -d -p 9000:9000 -e TZ=Europe/Minsk --name php-app siomkin/8.5-fpm-alpine
 
 # Build with BuildKit for better caching (recommended)
 DOCKER_BUILDKIT=1 docker build -t siomkin/8.5-fpm-alpine .
@@ -64,10 +66,11 @@ DOCKER_BUILDKIT=1 docker build -t siomkin/8.5-fpm-alpine .
 The image includes the following PHP extensions:
 - bcmath
 - exif
-- gd
+- gd (with freetype, jpeg, webp, avif support)
 - gmp
 - intl
 - mysqli
+- opcache
 - pcntl
 - pdo_mysql
 - pdo_pgsql
@@ -75,20 +78,19 @@ The image includes the following PHP extensions:
 - sockets
 - xsl
 - zip
-- xdebug (optional)
+- xdebug (development images only)
 
 ## Configuration
 
 ### Build Arguments
 
-- `TZ`: Timezone (default: UTC)
+- `TZ`: System timezone baked into the image (default: UTC). Sets `/etc/localtime` at build time.
 - `INSTALL_XDEBUG`: Install Xdebug extension (default: true)
-  - Set to `false` for production builds (25-40% faster build time)
-  - Production images are automatically built with this set to `false`
+  - Set to `false` for production builds
 
 ### Environment Variables
 
-- `TZ`: Set from build argument, affects container timezone
+- `TZ`: Overrides PHP's `date.timezone` at container startup (e.g. `-e TZ=Europe/Minsk`). Does not change the system timezone set at build time.
 
 ### Image Variants
 
@@ -101,21 +103,10 @@ The image includes the following PHP extensions:
 - No Xdebug (better performance)
 - Smaller image size
 - Optimized for production workloads
-- 10-15% smaller than development image
-
-## Performance Optimizations
-
-This image uses several optimization techniques:
-
-- **Multi-stage build**: Separates build dependencies from runtime, reducing final image size by 10-15%
-- **Parallel compilation**: Uses all CPU cores (`make -j$(nproc)`) for faster builds
-- **Conditional Xdebug**: Production images skip Xdebug entirely, saving 25-40% build time
-- **Layer caching**: Optimized layer ordering for better Docker cache utilization
-- **Pinned dependencies**: Uses specific versions (e.g., install-php-extensions v2.7.0) for reproducible builds
 
 ## CI/CD Workflow
 
-The GitHub Actions workflow is optimized for fast builds:
+The GitHub Actions workflow builds and tests both image variants.
 
 ### Build Triggers
 
@@ -128,7 +119,7 @@ The GitHub Actions workflow is optimized for fast builds:
 
 ### Features
 
-- **Fast PR builds**: Only builds for Linux AMD64 (~5-7 min vs ~15-20 min)
+- **Fast PR builds**: Only builds for Linux AMD64
 - **Multi-platform releases**: ARM64 support for Apple Silicon and ARM servers
 - **Separate images**: Production (no Xdebug) and Development (with Xdebug)
 - **Security scanning**: Trivy vulnerability scanning on tag releases
@@ -147,17 +138,12 @@ docker ps  # Will show health status
 - Runs as non-root user (www:1000)
 - Minimal Alpine Linux base
 - Regular security updates via automated builds
-
-## License
-
-MIT License
+- Trivy vulnerability scanning in CI/CD
 
 ## PHP 8.5 Features
 
 Learn about the new features and improvements in PHP 8.5 in our [PHP 8.5 Features Guide](./PHP-8.5-FEATURES.md).
 
-## Additional Documentation
+## License
 
-- [OPTIMIZATION-GUIDE.md](./OPTIMIZATION-GUIDE.md) - Detailed performance optimization documentation
-- [MIGRATION-GUIDE.md](./MIGRATION-GUIDE.md) - Guide for upgrading from previous versions
-- [SECURITY.md](./SECURITY.md) - Security policy and reporting guidelines
+MIT License

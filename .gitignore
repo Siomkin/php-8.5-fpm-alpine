@@ -1,6 +1,8 @@
 .idea/
 .cursor/
 .claude/
-specs/  
+.codex/
+.specify/
+specs/
 CLAUDE.md
 AGENTS.md

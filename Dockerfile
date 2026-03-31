@@ -1,5 +1,4 @@
-# Multi-stage build for optimized image size and build time
-FROM php:8.5.4-fpm-alpine AS builder
+FROM php:8.5.4-fpm-alpine
 
 ARG TZ=UTC
 ARG INSTALL_XDEBUG=true
@@ -7,34 +6,32 @@ ARG INSTALL_XDEBUG=true
 ENV TZ=${TZ}
 
 # Install PHP extension installer with pinned version for reproducibility
-ADD https://github.com/mlocati/docker-php-extension-installer/releases/download/2.7.0/install-php-extensions /usr/local/bin/
+ADD https://github.com/mlocati/docker-php-extension-installer/releases/download/2.10.8/install-php-extensions /usr/local/bin/
 RUN chmod +x /usr/local/bin/install-php-extensions
 
 # Add a non-root user
 RUN addgroup -g 1000 www && \
     adduser -u 1000 -G www -s /bin/sh -D www
 
-# Set timezone (stable configuration)
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+# Set default timezone and prepare writable ini for runtime TZ override
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && echo "date.timezone=$TZ" > /usr/local/etc/php/conf.d/zz-timezone.ini \
+    && chown www:www /usr/local/etc/php/conf.d/zz-timezone.ini
 
-# Install runtime dependencies (grouped for optimal layer caching)
+# Install system dependencies and PHP extensions in a single layer
 RUN apk add --no-cache --update \
-        # Core utilities
         ca-certificates \
         curl \
         unzip \
         git \
         bash \
         fcgi \
-        # Database clients
         mariadb-client \
         postgresql-client \
-        # Image processing tools
         jpegoptim \
         optipng \
         pngquant \
         gifsicle \
-        # Runtime libraries (alphabetically sorted)
         freetype \
         gmp \
         icu-libs \
@@ -51,11 +48,8 @@ RUN apk add --no-cache --update \
         oniguruma \
         rabbitmq-c \
         zip \
-        # Process management
-        supervisor
-
-# Install PHP extensions with consolidated build dependencies
-RUN apk add --no-cache --virtual .build-deps \
+        supervisor \
+    && apk add --no-cache --virtual .build-deps \
         $PHPIZE_DEPS \
         postgresql-dev \
         libssh-dev \
@@ -71,92 +65,27 @@ RUN apk add --no-cache --virtual .build-deps \
         libpng-dev \
         jpeg-dev \
         libwebp-dev \
+        libavif-dev \
         linux-headers \
-    && install-php-extensions bcmath exif gd gmp intl mysqli pcntl pdo_mysql pdo_pgsql sockets xsl zip \
-    && apk del .build-deps
+    && install-php-extensions bcmath exif gd gmp intl mysqli opcache pcntl pdo_mysql pdo_pgsql redis sockets xsl zip \
+    && if [ "$INSTALL_XDEBUG" = "true" ]; then \
+        install-php-extensions xdebug; \
+    fi \
+    && apk del .build-deps \
+    && rm -rf /var/cache/apk/*
 
-# Install Xdebug conditionally (separate for better caching)
-RUN if [ "$INSTALL_XDEBUG" = "true" ]; then \
-        apk add --no-cache --virtual .xdebug-build-deps \
-            $PHPIZE_DEPS \
-            linux-headers \
-            git \
-        && git clone --depth 1 --branch 3.5.0alpha2 https://github.com/xdebug/xdebug.git /tmp/xdebug \
-        && cd /tmp/xdebug \
-        && phpize \
-        && ./configure --enable-xdebug \
-        && make -j$(nproc) \
-        && make install \
-        && docker-php-ext-enable xdebug \
-        && apk del .xdebug-build-deps \
-        && rm -rf /tmp/xdebug; \
-    fi
-
-# Final stage - runtime image
-FROM php:8.5.4-fpm-alpine
-
-ARG TZ=UTC
-ARG INSTALL_XDEBUG=true
-
-ENV TZ=${TZ}
-
-# Copy PHP extensions from builder
-COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
-COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
-
-# Add non-root user
-RUN addgroup -g 1000 www && \
-    adduser -u 1000 -G www -s /bin/sh -D www
-
-# Set timezone
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
-# Install only runtime dependencies (no build deps)
-RUN apk add --no-cache --update \
-        # Core utilities
-        ca-certificates \
-        curl \
-        unzip \
-        git \
-        bash \
-        fcgi \
-        # Database clients
-        mariadb-client \
-        postgresql-client \
-        # Image processing tools
-        jpegoptim \
-        optipng \
-        pngquant \
-        gifsicle \
-        # Runtime libraries
-        freetype \
-        gmp \
-        icu-libs \
-        jpeg \
-        libavif \
-        libjpeg-turbo \
-        libpng \
-        libssh2 \
-        libwebp \
-        libxpm \
-        libxslt \
-        libxml2 \
-        libzip \
-        oniguruma \
-        rabbitmq-c \
-        zip \
-        # Process management
-        supervisor
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /var/www
 
 # Switch to non-root user
 USER www
 
-# Expose port 9000 and start php-fpm server
 EXPOSE 9000
 
 HEALTHCHECK --interval=5m --timeout=3s \
   CMD SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -connect 127.0.0.1:9000 || exit 1
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["php-fpm"]

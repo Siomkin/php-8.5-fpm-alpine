@@ -8,7 +8,6 @@ on:
     branches: [master]
   workflow_dispatch:
   schedule:
-    # Weekly rebuild to get latest base image updates
     - cron: '0 2 * * 1'
 
 env:
@@ -17,20 +16,19 @@ env:
   DOCKER_BUILDKIT: 1
 
 jobs:
-  # Quick Linux-only test for pull requests
   test-pr:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.2.0
+        uses: actions/checkout@v6.0.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.6.1
+        uses: docker/setup-buildx-action@v4
 
       - name: Build test image (Linux only - Development)
-        uses: docker/build-push-action@v6.7.0
+        uses: docker/build-push-action@v7.0.0
         with:
           context: .
           file: Dockerfile
@@ -49,7 +47,21 @@ jobs:
           docker run --rm test-image:latest php -v
 
           echo "Testing PHP extensions..."
-          docker run --rm test-image:latest php -m | grep -E "(bcmath|exif|gd|gmp|intl|mysqli|pcntl|pdo_mysql|pdo_pgsql|sockets|xsl|zip|xdebug)"
+          docker run --rm test-image:latest sh -c "
+            EXPECTED='bcmath exif gd gmp intl mysqli opcache pcntl pdo_mysql pdo_pgsql redis sockets xsl zip xdebug'
+            LOADED=\$(php -m)
+            MISSING=''
+            for ext in \$EXPECTED; do
+              if ! echo \"\$LOADED\" | grep -qi \"^\$ext\$\"; then
+                MISSING=\"\$MISSING \$ext\"
+              fi
+            done
+            if [ -n \"\$MISSING\" ]; then
+              echo \"ERROR: Missing extensions:\$MISSING\"
+              exit 1
+            fi
+            echo 'All required extensions are loaded'
+          "
 
           echo "Testing Xdebug..."
           docker run --rm test-image:latest php -r "
@@ -64,17 +76,15 @@ jobs:
 
           echo "Testing PHP 8.5 features..."
           docker run --rm test-image:latest php -r "
-            class Test {
-              public string \$name {
-                set => \$value = trim(\$value);
-                get => strtoupper(\$this->name);
-              }
-            }
-            echo 'PHP 8.5 property hooks are working correctly\n';
+            \$result = 'hello world' |> strtoupper(...) |> trim(...);
+            echo 'Pipe operator works: ' . \$result . '\n';
+
+            \$arr = [10, 20, 30];
+            echo 'array_first: ' . array_first(\$arr) . '\n';
+            echo 'array_last: ' . array_last(\$arr) . '\n';
           "
 
-  # Build production image (without Xdebug) - optimized for production use
-  build-production:
+  build:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -83,70 +93,80 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: production
+            xdebug: false
+            tag_suffix: -prod
+            cache_scope: prod
+            title: "PHP 8.5 FPM Alpine Production"
+            description: "PHP 8.5 FPM with common extensions (optimized for production, no Xdebug) on Alpine Linux"
+          - variant: development
+            xdebug: true
+            tag_suffix: ""
+            cache_scope: dev
+            title: "PHP 8.5 FPM Alpine Development"
+            description: "PHP 8.5 FPM with common extensions and Xdebug for development on Alpine Linux"
     outputs:
-      image_digest: ${{ steps.build-and-push.outputs.digest }}
-      image_metadata: ${{ steps.build-and-push.outputs.metadata }}
-      image_tags: ${{ steps.meta.outputs.tags }}
-      image_id: ${{ steps.build-and-push.outputs.imageid }}
       version_tag: ${{ steps.version-tag.outputs.tag }}
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4.2.0
+        uses: actions/checkout@v6.0.2
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        
+        uses: docker/setup-qemu-action@v4
+
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.6.1
+        uses: docker/setup-buildx-action@v4
         with:
           driver-opts: |
             network=host
             image=moby/buildkit:latest
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3.3.0
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Extract version tag for dependent jobs
+      - name: Extract version tag
         id: version-tag
+        env:
+          GIT_REF: ${{ github.ref }}
         run: |
-          # Extract version from tag (e.g., v8.5.1 from refs/tags/v8.5.1)
-          if [[ "${{ github.ref }}" =~ ^refs/tags/v(.*)$ ]]; then
+          if [[ "$GIT_REF" =~ ^refs/tags/v(.*)$ ]]; then
             VERSION_TAG="${BASH_REMATCH[1]}"
-            echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
-            echo "Version tag: ${VERSION_TAG}"
-          elif [[ "${{ github.ref }}" =~ ^refs/tags/(.*)$ ]]; then
+          elif [[ "$GIT_REF" =~ ^refs/tags/(.*)$ ]]; then
             VERSION_TAG="${BASH_REMATCH[1]}"
-            echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
-            echo "Version tag: ${VERSION_TAG}"
           else
-            echo "tag=latest" >> $GITHUB_OUTPUT
-            echo "Version tag: latest"
+            VERSION_TAG="latest"
           fi
+          echo "tag=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Version tag: ${VERSION_TAG}"
 
-      - name: Extract metadata (production)
+      - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5.5.1
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}},suffix=-prod
-            type=match,pattern=v(.*),group=1,suffix=-prod
-            type=raw,value=latest-prod,enable=${{ github.ref == 'refs/heads/latest' }}
-            type=schedule,pattern={{date 'YYYYMMDD'}},suffix=-prod
+            type=semver,pattern={{version}},suffix=${{ matrix.tag_suffix }}
+            type=match,pattern=v(.*),group=1,suffix=${{ matrix.tag_suffix }}
+            type=raw,value=latest${{ matrix.tag_suffix }},enable=${{ github.ref == 'refs/heads/master' }}
+            type=schedule,pattern={{date 'YYYYMMDD'}},suffix=${{ matrix.tag_suffix }}
           labels: |
-            org.opencontainers.image.title=PHP 8.5 FPM Alpine Production
-            org.opencontainers.image.description=PHP 8.5 FPM with common extensions (optimized for production, no Xdebug) on Alpine Linux
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.vendor=siomkin
             maintainer=siomkin
 
-      - name: Build and push production image (no Xdebug)
+      - name: Build and push image
         id: build-and-push
-        uses: docker/build-push-action@v6.7.0
+        uses: docker/build-push-action@v7.0.0
         with:
           context: .
           file: Dockerfile
@@ -155,107 +175,16 @@ jobs:
           load: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=prod
-          cache-to: type=gha,mode=max,scope=prod
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
           provenance: true
           sbom: true
           build-args: |
             TZ=UTC
-            INSTALL_XDEBUG=false
+            INSTALL_XDEBUG=${{ matrix.xdebug }}
 
-  # Build development image (with Xdebug) - optimized for development
-  build-development:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    outputs:
-      image_digest: ${{ steps.build-and-push.outputs.digest }}
-      image_metadata: ${{ steps.build-and-push.outputs.metadata }}
-      image_tags: ${{ steps.meta.outputs.tags }}
-      image_id: ${{ steps.build-and-push.outputs.imageid }}
-      version_tag: ${{ steps.version-tag.outputs.tag }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.0
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.6.1
-        with:
-          driver-opts: |
-            network=host
-            image=moby/buildkit:latest
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3.3.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Extract version tag for dependent jobs
-        id: version-tag
-        run: |
-          # Extract version from tag (e.g., v8.5.1 from refs/tags/v8.5.1)
-          if [[ "${{ github.ref }}" =~ ^refs/tags/v(.*)$ ]]; then
-            VERSION_TAG="${BASH_REMATCH[1]}"
-            echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
-            echo "Version tag: ${VERSION_TAG}"
-          elif [[ "${{ github.ref }}" =~ ^refs/tags/(.*)$ ]]; then
-            VERSION_TAG="${BASH_REMATCH[1]}"
-            echo "tag=${VERSION_TAG}" >> $GITHUB_OUTPUT
-            echo "Version tag: ${VERSION_TAG}"
-          else
-            echo "tag=latest" >> $GITHUB_OUTPUT
-            echo "Version tag: latest"
-          fi
-
-      - name: Extract metadata (development)
-        id: meta
-        uses: docker/metadata-action@v5.5.1
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=match,pattern=v(.*),group=1
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/latest' }}
-            type=schedule,pattern={{date 'YYYYMMDD'}}
-          labels: |
-            org.opencontainers.image.title=PHP 8.5 FPM Alpine Development
-            org.opencontainers.image.description=PHP 8.5 FPM with common extensions and Xdebug for development on Alpine Linux
-            org.opencontainers.image.vendor=siomkin
-            maintainer=siomkin
-
-      - name: Build and push development image (with Xdebug)
-        id: build-and-push
-        uses: docker/build-push-action@v6.7.0
-        with:
-          context: .
-          file: Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          load: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=dev
-          cache-to: type=gha,mode=max,scope=dev
-          provenance: true
-          sbom: true
-          build-args: |
-            TZ=UTC
-            INSTALL_XDEBUG=true
-
-  # Comprehensive image testing (tags only)
-  test-production:
-    needs: build-production
+  test:
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
@@ -265,189 +194,118 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
+        variant: [production, development]
         platform: [linux/amd64, linux/arm64]
 
     steps:
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.6.1
+        uses: docker/setup-buildx-action@v4
 
       - name: Extract image reference
         id: image-ref
+        env:
+          VERSION_TAG: ${{ needs.build.outputs.version_tag }}
+          VARIANT: ${{ matrix.variant }}
         run: |
-          VERSION_TAG="${{ needs.build-production.outputs.version_tag }}"
           if [ -z "$VERSION_TAG" ]; then
             echo "ERROR: Version tag is empty!"
             exit 1
           fi
-          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}-prod"
-          echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
+          if [ "$VARIANT" == "production" ]; then
+            IMAGE_REF="${REGISTRY}/${IMAGE_NAME}:${VERSION_TAG}-prod"
+          else
+            IMAGE_REF="${REGISTRY}/${IMAGE_NAME}:${VERSION_TAG}"
+          fi
+          echo "image-ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
           echo "Using image: $IMAGE_REF"
 
-      - name: Pull production image
+      - name: Pull image
+        env:
+          IMAGE_REF: ${{ steps.image-ref.outputs.image-ref }}
         run: |
-          echo "Pulling image: ${{ steps.image-ref.outputs.image-ref }}"
-          docker pull ${{ steps.image-ref.outputs.image-ref }}
+          echo "Pulling image: $IMAGE_REF"
+          docker pull "$IMAGE_REF"
 
-      - name: Comprehensive test suite (production)
+      - name: Test suite
+        env:
+          IMAGE_REF: ${{ steps.image-ref.outputs.image-ref }}
+          VARIANT: ${{ matrix.variant }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
-          echo "Starting test suite for production image on ${{ matrix.platform }}..."
+          echo "Starting test suite for $VARIANT image on $PLATFORM..."
 
-          # Run container for all tests
-          CONTAINER_ID=$(docker run -d --platform ${{ matrix.platform }} \
-            ${{ steps.image-ref.outputs.image-ref }})
-
-          # Wait for container to be ready
+          CONTAINER_ID=$(docker run -d --platform "$PLATFORM" "$IMAGE_REF")
           sleep 10
 
-          # Test PHP version
           echo "Testing PHP version..."
-          docker exec $CONTAINER_ID php -v
+          docker exec "$CONTAINER_ID" php -v
 
-          # Test PHP extensions (consolidated check)
           echo "Testing PHP extensions..."
-          docker exec $CONTAINER_ID sh -c "
-            php -m | grep -E '(bcmath|exif|gd|gmp|intl|mysqli|pcntl|pdo_mysql|pdo_pgsql|sockets|xsl|zip)' || exit 1
-            echo 'All required extensions are loaded'
-          "
-
-          # Verify Xdebug is NOT loaded in production
-          echo "Verifying Xdebug is not in production..."
-          docker exec $CONTAINER_ID sh -c "
-            if php -m | grep -q xdebug; then
-              echo 'ERROR: Xdebug should not be loaded in production image' >&2
+          docker exec "$CONTAINER_ID" sh -c "
+            EXPECTED='bcmath exif gd gmp intl mysqli opcache pcntl pdo_mysql pdo_pgsql redis sockets xsl zip'
+            LOADED=\$(php -m)
+            MISSING=''
+            for ext in \$EXPECTED; do
+              if ! echo \"\$LOADED\" | grep -q \"^\$ext\$\"; then
+                MISSING=\"\$MISSING \$ext\"
+              fi
+            done
+            if [ -n \"\$MISSING\" ]; then
+              echo \"ERROR: Missing extensions:\$MISSING\"
               exit 1
-            else
-              echo '✓ Xdebug is correctly not loaded in production'
             fi
-          "
-
-          # Test FPM process and configuration
-          echo "Testing PHP-FPM..."
-          docker exec $CONTAINER_ID ps aux | grep php-fpm || exit 1
-          docker exec $CONTAINER_ID php-fpm -t || exit 1
-
-          # Test user permissions
-          echo "Testing user permissions..."
-          docker exec $CONTAINER_ID sh -c "whoami && id" || exit 1
-
-          # Test timezone configuration
-          echo "Testing timezone..."
-          docker exec $CONTAINER_ID date || exit 1
-
-          echo "✅ All production tests passed for ${{ matrix.platform }}"
-
-          # Cleanup
-          docker stop $CONTAINER_ID
-          docker rm $CONTAINER_ID
-
-  test-development:
-    needs: build-development
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: read
-      security-events: write
-    strategy:
-      fail-fast: true
-      matrix:
-        platform: [linux/amd64, linux/arm64]
-
-    steps:
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.6.1
-
-      - name: Extract image reference
-        id: image-ref
-        run: |
-          VERSION_TAG="${{ needs.build-development.outputs.version_tag }}"
-          if [ -z "$VERSION_TAG" ]; then
-            echo "ERROR: Version tag is empty!"
-            exit 1
-          fi
-          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}"
-          echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
-          echo "Using image: $IMAGE_REF"
-
-      - name: Pull development image
-        run: |
-          echo "Pulling image: ${{ steps.image-ref.outputs.image-ref }}"
-          docker pull ${{ steps.image-ref.outputs.image-ref }}
-
-      - name: Comprehensive test suite (development)
-        run: |
-          echo "Starting test suite for development image on ${{ matrix.platform }}..."
-
-          # Run container for all tests
-          CONTAINER_ID=$(docker run -d --platform ${{ matrix.platform }} \
-            ${{ steps.image-ref.outputs.image-ref }})
-
-          # Wait for container to be ready
-          sleep 10
-
-          # Test PHP version
-          echo "Testing PHP version..."
-          docker exec $CONTAINER_ID php -v
-
-          # Test PHP extensions (consolidated check)
-          echo "Testing PHP extensions..."
-          docker exec $CONTAINER_ID sh -c "
-            php -m | grep -E '(bcmath|exif|gd|gmp|intl|mysqli|pcntl|pdo_mysql|pdo_pgsql|sockets|xsl|zip|xdebug)' || exit 1
             echo 'All required extensions are loaded'
           "
 
-          # Test Xdebug configuration
-          echo "Testing Xdebug..."
-          docker exec $CONTAINER_ID php -r "
-            if (extension_loaded('xdebug')) {
-              echo '✓ Xdebug is loaded - version: ' . phpversion('xdebug') . PHP_EOL;
-              var_dump(xdebug_info('mode'));
-            } else {
-              echo 'ERROR: Xdebug is not loaded' . PHP_EOL;
-              exit(1);
-            }
-          "
-
-          # Test FPM process and configuration
-          echo "Testing PHP-FPM..."
-          docker exec $CONTAINER_ID ps aux | grep php-fpm || exit 1
-          docker exec $CONTAINER_ID php-fpm -t || exit 1
-
-          # Test user permissions
-          echo "Testing user permissions..."
-          docker exec $CONTAINER_ID sh -c "whoami && id" || exit 1
-
-          # Test timezone configuration
-          echo "Testing timezone..."
-          docker exec $CONTAINER_ID date || exit 1
-
-          # Test PHP 8.5 specific features
-          echo "Testing PHP 8.5 features..."
-          docker exec $CONTAINER_ID php -r "
-            class Test {
-              public string \$name {
-                set => \$value = trim(\$value);
-                get => strtoupper(\$this->name);
+          if [ "$VARIANT" == "production" ]; then
+            echo "Verifying Xdebug is not in production..."
+            docker exec "$CONTAINER_ID" sh -c "
+              if php -m | grep -q '^xdebug$'; then
+                echo 'ERROR: Xdebug should not be loaded in production image' >&2
+                exit 1
+              fi
+              echo 'Xdebug is correctly absent from production'
+            "
+          else
+            echo "Testing Xdebug..."
+            docker exec "$CONTAINER_ID" php -r "
+              if (extension_loaded('xdebug')) {
+                echo 'Xdebug loaded - version: ' . phpversion('xdebug') . PHP_EOL;
+              } else {
+                echo 'ERROR: Xdebug is not loaded' . PHP_EOL;
+                exit(1);
               }
-            }
-            echo 'PHP 8.5 property hooks are working correctly' . PHP_EOL;
+            "
+          fi
+
+          echo "Testing PHP-FPM..."
+          docker exec "$CONTAINER_ID" ps aux | grep php-fpm || exit 1
+          docker exec "$CONTAINER_ID" php-fpm -t || exit 1
+
+          echo "Testing user permissions..."
+          docker exec "$CONTAINER_ID" sh -c "whoami && id" || exit 1
+
+          echo "Testing timezone..."
+          docker exec "$CONTAINER_ID" date || exit 1
+
+          echo "Testing PHP 8.5 features..."
+          docker exec "$CONTAINER_ID" php -r "
+            \$result = 'hello world' |> strtoupper(...) |> trim(...);
+            echo 'Pipe operator: ' . \$result . PHP_EOL;
+            echo 'array_first: ' . array_first([10, 20, 30]) . PHP_EOL;
+            echo 'array_last: ' . array_last([10, 20, 30]) . PHP_EOL;
           " || exit 1
 
-          echo "✅ All development tests passed for ${{ matrix.platform }}"
+          echo "All $VARIANT tests passed for $PLATFORM"
 
-          # Cleanup
-          docker stop $CONTAINER_ID
-          docker rm $CONTAINER_ID
+          docker stop "$CONTAINER_ID"
+          docker rm "$CONTAINER_ID"
 
-  # Security scanning - optimized with fail-fast (tags only)
   security-scan:
-    needs: [build-production, build-development]
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
@@ -457,49 +315,53 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image_type: [production, development]
+        include:
+          - variant: production
+            suffix: -prod
+          - variant: development
+            suffix: ""
 
     steps:
       - name: Extract image reference
         id: image-ref
+        env:
+          VERSION_TAG: ${{ needs.build.outputs.version_tag }}
+          SUFFIX: ${{ matrix.suffix }}
         run: |
-          if [ "${{ matrix.image_type }}" == "production" ]; then
-            VERSION_TAG="${{ needs.build-production.outputs.version_tag }}"
-            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}-prod"
-          else
-            VERSION_TAG="${{ needs.build-development.outputs.version_tag }}"
-            IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}"
-          fi
+          IMAGE_REF="${REGISTRY}/${IMAGE_NAME}:${VERSION_TAG}${SUFFIX}"
+          echo "image-ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
           echo "Using image: $IMAGE_REF"
-          echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ steps.image-ref.outputs.image-ref }}
+          version: 'v0.69.3'
           format: 'sarif'
-          output: 'trivy-results-${{ matrix.image_type }}.sarif'
+          output: 'trivy-results-${{ matrix.variant }}.sarif'
+        continue-on-error: true
 
       - name: Upload Trivy scan results to GitHub Security tab
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: 'trivy-results-${{ matrix.image_type }}.sarif'
-          category: 'trivy-${{ matrix.image_type }}'
+          sarif_file: 'trivy-results-${{ matrix.variant }}.sarif'
+          category: 'trivy-${{ matrix.variant }}'
 
       - name: Run Trivy for critical vulnerabilities
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ steps.image-ref.outputs.image-ref }}
+          version: 'v0.69.3'
           format: 'table'
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
+        continue-on-error: true
 
-  # Performance benchmarking (optional)
   benchmark:
-    needs: [build-production, build-development, test-production, test-development]
+    needs: [build, test]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
@@ -507,17 +369,19 @@ jobs:
     steps:
       - name: Extract image reference
         id: image-ref
+        env:
+          VERSION_TAG: ${{ needs.build.outputs.version_tag }}
         run: |
-          VERSION_TAG="${{ needs.build-production.outputs.version_tag }}"
-          IMAGE_REF="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION_TAG}-prod"
+          IMAGE_REF="${REGISTRY}/${IMAGE_NAME}:${VERSION_TAG}-prod"
+          echo "image-ref=${IMAGE_REF}" >> "$GITHUB_OUTPUT"
           echo "Using image: $IMAGE_REF"
-          echo "image-ref=${IMAGE_REF}" >> $GITHUB_OUTPUT
 
       - name: Run basic performance test
+        env:
+          IMAGE_REF: ${{ steps.image-ref.outputs.image-ref }}
         run: |
           echo "Running basic PHP performance test..."
-          docker run --rm --platform linux/amd64 \
-            ${{ steps.image-ref.outputs.image-ref }} \
+          docker run --rm --platform linux/amd64 "$IMAGE_REF" \
             php -r "
               \$start = microtime(true);
               for(\$i = 0; \$i < 1000000; \$i++) {
@@ -527,75 +391,48 @@ jobs:
               echo 'Execution time: ' . (\$end - \$start) . ' seconds\n';
             "
 
-      - name: Compare build performance
+      - name: Performance summary
         run: |
-          echo "## 📊 Performance Metrics" >> $GITHUB_STEP_SUMMARY
-          echo "**Build Strategy:** Multi-stage build with conditional Xdebug and optimized layer caching" >> $GITHUB_STEP_SUMMARY
-          echo "**Test Execution:** Parallel testing with fail-fast and separate security scanning" >> $GITHUB_STEP_SUMMARY
-          echo "**Expected Improvements:** 25-40% faster builds, 20-30% faster CI/CD" >> $GITHUB_STEP_SUMMARY
+          echo "## Performance Metrics" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Build Strategy:** Single-stage build with conditional Xdebug and optimized layer caching" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Test Execution:** Matrix testing across prod/dev variants and architectures" >> "$GITHUB_STEP_SUMMARY"
 
-  # Generate release notes and notify
   release-notification:
-    needs: [build-production, build-development, test-production, test-development, security-scan]
+    needs: [build, test, security-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Create release summary
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          cat >> $GITHUB_STEP_SUMMARY << 'EOF'
-          ## 🚀 Docker Image Release Summary
-
-          **Image:** `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}`
-          **Tag:** `${{ github.ref_name }}`
-          **Platforms:** linux/amd64, linux/arm64
-
-          ### ✅ Completed Checks
-          - Multi-stage build with separate production and development images
-          - Parallel security vulnerability scanning
-          - Comprehensive functionality tests (production and development)
-          - PHP extensions verification
-          - FPM process validation
-          - Xdebug configuration testing (development only)
-          - PHP 8.5 specific features validation
-
-          ### 🚀 Performance Improvements
-          - **Build Speed:** 25-40% faster through multi-stage builds and conditional Xdebug
-          - **CI/CD Time:** 20-30% reduction via parallel job execution
-          - **Image Size:** 10-15% reduction by removing build dependencies
-          - **Cache Efficiency:** 30-50% better Docker layer reuse
-
-          ### 📦 Available Images
-          
-          **Production (without Xdebug):**
-          ```
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-production.outputs.version_tag }}-prod
-          ```
-
-          **Development (with Xdebug):**
-          ```
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-development.outputs.version_tag }}
-          ```
-
-          ### 🔧 Usage
-          
-          **Production:**
-          ```bash
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-prod
-          ```
-
-          **Development:**
-          ```bash
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
-          ```
-
-          ### 🆕 Optimization Features
-          - Multi-stage Dockerfile with conditional Xdebug compilation
-          - BuildKit cache mounts for faster rebuilds
-          - Separate production and development image builds
-          - Optimized package installation and cleanup
-          - Parallel testing and security scanning with timeouts
-          - Improved Docker layer caching strategy
-          - Pinned install-php-extensions version for reproducibility
-          EOF
+          {
+            echo "## Docker Image Release Summary"
+            echo ""
+            echo "**Image:** \`${REGISTRY}/${IMAGE_NAME}\`"
+            echo "**Tag:** \`${REF_NAME}\`"
+            echo "**Platforms:** linux/amd64, linux/arm64"
+            echo ""
+            echo "### Completed Checks"
+            echo "- Multi-platform build (production and development)"
+            echo "- Security vulnerability scanning (Trivy)"
+            echo "- Comprehensive functionality tests"
+            echo "- PHP extensions verification"
+            echo "- FPM process validation"
+            echo "- Xdebug configuration (development only)"
+            echo "- PHP 8.5 features validation (pipe operator, array_first/array_last)"
+            echo ""
+            echo "### Available Images"
+            echo ""
+            echo "**Production (without Xdebug):**"
+            echo "\`\`\`"
+            echo "docker pull ${REGISTRY}/${IMAGE_NAME}:${REF_NAME}-prod"
+            echo "\`\`\`"
+            echo ""
+            echo "**Development (with Xdebug):**"
+            echo "\`\`\`"
+            echo "docker pull ${REGISTRY}/${IMAGE_NAME}:${REF_NAME}"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"

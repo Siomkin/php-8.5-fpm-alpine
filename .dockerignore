@@ -33,7 +33,7 @@ tmp/
 temp/
 .cache/
 
-# Node.js files (if any)
+# Node.js files
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -51,3 +51,9 @@ logs/
 # Build artifacts
 dist/
 build/
+
+# AI/tooling configs
+.claude/
+.cursor/
+.specify/
+.codex/
