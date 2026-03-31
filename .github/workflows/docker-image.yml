@@ -353,7 +353,7 @@ jobs:
           echo "Using image: $IMAGE_REF"
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@v0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: ${{ steps.image-ref.outputs.image-ref }}
           version: 'v0.69.3'
@@ -369,7 +369,7 @@ jobs:
           category: 'trivy-${{ matrix.variant }}'
 
       - name: Run Trivy for critical vulnerabilities
-        uses: aquasecurity/trivy-action@v0.35.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           image-ref: ${{ steps.image-ref.outputs.image-ref }}
           version: 'v0.69.3'
