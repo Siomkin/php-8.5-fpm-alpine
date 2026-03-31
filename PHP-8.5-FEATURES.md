@@ -4,138 +4,133 @@ This document highlights the new features and improvements in PHP 8.5 that are a
 
 ## Major New Features
 
-### 1. Property Hooks
+### 1. Pipe Operator (`|>`)
 
-Property hooks provide a way to define getter and setter behavior directly on properties, reducing the need for explicit getter/setter methods.
-
-```php
-class User
-{
-    public string $name {
-        set => $value = trim($value);
-        get => strtoupper($this->name);
-    }
-    
-    public string $email {
-        set {
-            if (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
-                throw new InvalidArgumentException("Invalid email format");
-            }
-            $this->email = $value;
-        }
-    }
-}
-```
-
-### 2. Asymmetric Visibility
-
-Asymmetric visibility allows different access levels for reading and writing properties.
+The pipe operator chains function calls left-to-right, eliminating deeply nested calls and temporary variables.
 
 ```php
-class BankAccount
-{
-    public private(set) float $balance;
-    
-    public function __construct(float $initialBalance) {
-        $this->balance = $initialBalance;
-    }
-    
-    public function deposit(float $amount): void {
-        $this->balance += $amount;
-    }
-    
-    // balance can be read publicly but only modified privately
-}
+$result = "  hello world  "
+    |> trim(...)
+    |> strtoupper(...)
+    |> str_replace(' ', '-', ...);
 
-$account = new BankAccount(100.0);
-echo $account->balance;  // Allowed: public read access
-$account->balance = 200; // Error: private write access
+echo $result; // "HELLO-WORLD"
 ```
 
-### 3. Deprecated Attribute
+Each callable must accept exactly one required parameter. The result of the left side becomes the argument to the right side.
 
-The new `#[Deprecated]` attribute allows marking functions, methods, and classes as deprecated with custom messages.
+### 2. `array_first()` and `array_last()`
+
+Native functions to retrieve the first and last values of an array, complementing `array_key_first()` and `array_key_last()` from PHP 7.3.
 
 ```php
-class LegacyCode
-{
-    #[Deprecated("Use newMethod() instead", "8.5")]
-    public function oldMethod(): void
-    {
-        // Old implementation
-    }
-    
-    public function newMethod(): void
-    {
-        // New implementation
-    }
-}
+$items = ['apple', 'banana', 'cherry'];
+
+echo array_first($items); // "apple"
+echo array_last($items);  // "cherry"
+
+// Returns null for empty arrays
+echo array_first([]); // null
+
+// Works with associative arrays (insertion order)
+$map = ['b' => 2, 'a' => 1, 'c' => 3];
+echo array_first($map); // 2
+echo array_last($map);  // 3
 ```
 
-### 4. New DOM API
+### 3. URI Extension
 
-PHP 8.5 introduces a modern DOM API that's more consistent and easier to use.
+A built-in URI extension provides standards-compliant parsing and normalization following RFC 3986 and the WHATWG URL Standard, replacing the limited `parse_url()` function.
 
 ```php
-$dom = new DOMDocument();
-$dom->loadHTML('<html><body><div class="content">Hello</div></body></html>');
+$uri = Uri\Rfc3986Uri::parse("https://user:pass@example.com:8080/path?q=1#frag");
 
-$elements = $dom->querySelectorAll('.content');
-foreach ($elements as $element) {
-    echo $element->textContent;
-}
+echo $uri->getScheme();   // "https"
+echo $uri->getHost();     // "example.com"
+echo $uri->getPort();     // 8080
+echo $uri->getPath();     // "/path"
+echo $uri->getQuery();    // "q=1"
+echo $uri->getFragment(); // "frag"
 ```
 
-## Performance Improvements
+### 4. Clone With
 
-### 1. Optimized JIT Compilation
+Update properties while cloning objects using `clone()` with named arguments.
 
-The Just-In-Time (JIT) compiler has been further optimized for better performance in CPU-intensive applications.
+```php
+class Point {
+    public function __construct(
+        public readonly float $x,
+        public readonly float $y,
+    ) {}
+}
 
-### 2. Improved Type System
+$p1 = new Point(1.0, 2.0);
+$p2 = clone($p1, y: 5.0);
 
-The type system has been enhanced with better type inference and more efficient type checking.
+echo $p2->x; // 1.0 (preserved)
+echo $p2->y; // 5.0 (updated)
+```
 
-### 3. Memory Usage Optimizations
+### 5. `#[\NoDiscard]` Attribute
 
-Several memory usage optimizations have been implemented, reducing the memory footprint of PHP applications.
+Warns when a function's return value is silently ignored, helping catch bugs where return values indicate errors or carry important data.
+
+```php
+#[\NoDiscard("Check the return value for errors")]
+function save(string $data): bool {
+    // ...
+    return true;
+}
+
+save("data"); // Warning: return value of save() is not used
+$ok = save("data"); // No warning
+```
+
+### 6. Closures in Constant Expressions
+
+Static closures and first-class callables can now be used in constant expressions such as parameter defaults, attribute arguments, and constant initializers.
+
+```php
+function process(array $items, Closure $transform = strtoupper(...)) {
+    return array_map($transform, $items);
+}
+
+process(['hello', 'world']); // ["HELLO", "WORLD"]
+```
 
 ## Other Improvements
 
-### 1. Enhanced Error Handling
+### Error/Exception Handler Getters
 
-- Better error messages for common mistakes
-- More informative stack traces
-- Improved exception handling
+New `get_error_handler()` and `get_exception_handler()` functions let you inspect the currently registered handlers.
 
-### 2. Standard Library Additions
+```php
+set_error_handler(function ($errno, $errstr) { /* ... */ });
 
-- New string manipulation functions
-- Additional array functions
-- Improved date/time handling
+$handler = get_error_handler();
+// Returns the currently set error handler
+```
 
-### 3. Developer Experience
+### cURL Improvements
 
-- Better debugging capabilities
-- Improved reflection API
-- Enhanced error reporting
+`curl_multi_get_handles()` retrieves all handles currently attached to a multi-handle.
 
 ## Migration from PHP 8.4
 
-While PHP 8.5 is largely backward compatible with PHP 8.4, there are a few things to consider:
+PHP 8.5 is largely backward compatible with PHP 8.4. Key considerations:
 
 1. **Extension Compatibility**: Ensure all your PHP extensions are compatible with PHP 8.5
 2. **Testing**: Thoroughly test your application after upgrading
-3. **Dependencies**: Check that your dependencies support PHP 8.5
+3. **Dependencies**: Check that your Composer dependencies support PHP 8.5
 
 ## Using PHP 8.5 Features in This Docker Image
 
-This Docker image comes with PHP 8.5.4 and all the necessary extensions to take advantage of these new features. You can start using them immediately in your applications.
+This Docker image comes with PHP 8.5.4 and all the necessary extensions to take advantage of these new features.
 
 ### Example Docker Compose Configuration
 
 ```yaml
-version: '3.8'
 services:
   app:
     image: siomkin/8.5-fpm-alpine
@@ -143,34 +138,28 @@ services:
       - ./src:/var/www
     environment:
       - TZ=UTC
-    # Add your application-specific configuration here
 ```
 
 ### Testing PHP 8.5 Features
 
-You can test PHP 8.5 features using the following commands:
-
 ```bash
-# Run a container
 docker run -it --rm siomkin/8.5-fpm-alpine sh
 
-# Test property hooks
+# Test pipe operator
 php -r "
-class User {
-    public string \$name {
-        set => \$value = trim(\$value);
-        get => strtoupper(\$this->name);
-    }
-}
+\$result = '  hello world  ' |> trim(...) |> strtoupper(...);
+echo \$result;  // Outputs: HELLO WORLD
+"
 
-\$user = new User();
-\$user->name = '  john doe  ';
-echo \$user->name;  // Outputs: JOHN DOE
+# Test array_first / array_last
+php -r "
+echo array_first([10, 20, 30]);  // 10
+echo array_last([10, 20, 30]);   // 30
 "
 ```
 
 ## Resources
 
-- [PHP 8.5 Release Notes](https://www.php.net/releases/8.5/en.php)
+- [PHP 8.5 Release Announcement](https://www.php.net/releases/8.5/en.php)
 - [PHP 8.5 Migration Guide](https://www.php.net/manual/en/migration85.php)
-- [PHP 8.5 New Features](https://wiki.php.net/rfc#php_85)
+- [PHP 8.5 RFCs](https://wiki.php.net/rfc#php_85)
