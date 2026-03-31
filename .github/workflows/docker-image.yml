@@ -378,7 +378,6 @@ jobs:
           ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
-        continue-on-error: true
 
   benchmark:
     needs: [build, test]

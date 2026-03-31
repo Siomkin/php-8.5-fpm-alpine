@@ -5,9 +5,11 @@ ARG INSTALL_XDEBUG=true
 
 ENV TZ=${TZ}
 
-# Install PHP extension installer with pinned version for reproducibility
-ADD https://github.com/mlocati/docker-php-extension-installer/releases/download/2.10.8/install-php-extensions /usr/local/bin/
-RUN chmod +x /usr/local/bin/install-php-extensions
+# Install PHP extension installer with pinned version and integrity check
+RUN curl -sSLf -o /usr/local/bin/install-php-extensions \
+        https://github.com/mlocati/docker-php-extension-installer/releases/download/2.10.8/install-php-extensions \
+    && echo "5845684942bb54de6bcacf42008f85d1fc2d95a6a2b46b32756c3c991e08098e  /usr/local/bin/install-php-extensions" | sha256sum -c - \
+    && chmod +x /usr/local/bin/install-php-extensions
 
 # Add a non-root user
 RUN addgroup -g 1000 www && \
