@@ -48,7 +48,7 @@ jobs:
 
           echo "Testing PHP extensions..."
           docker run --rm test-image:latest sh -c "
-            EXPECTED='bcmath exif gd gmp intl mysqli opcache pcntl pdo_mysql pdo_pgsql redis sockets xsl zip xdebug'
+            EXPECTED='bcmath exif gd gmp intl mysqli pcntl pdo_mysql pdo_pgsql redis sockets xsl zip xdebug'
             LOADED=\$(php -m)
             MISSING=''
             for ext in \$EXPECTED; do
@@ -61,6 +61,16 @@ jobs:
               exit 1
             fi
             echo 'All required extensions are loaded'
+          "
+
+          echo "Testing OPcache..."
+          docker run --rm test-image:latest php -r "
+            if (extension_loaded('Zend OPcache')) {
+              echo 'OPcache is loaded\n';
+            } else {
+              echo 'ERROR: OPcache is not loaded\n';
+              exit(1);
+            }
           "
 
           echo "Testing Xdebug..."
@@ -245,11 +255,11 @@ jobs:
 
           echo "Testing PHP extensions..."
           docker exec "$CONTAINER_ID" sh -c "
-            EXPECTED='bcmath exif gd gmp intl mysqli opcache pcntl pdo_mysql pdo_pgsql redis sockets xsl zip'
+            EXPECTED='bcmath exif gd gmp intl mysqli pcntl pdo_mysql pdo_pgsql redis sockets xsl zip'
             LOADED=\$(php -m)
             MISSING=''
             for ext in \$EXPECTED; do
-              if ! echo \"\$LOADED\" | grep -q \"^\$ext\$\"; then
+              if ! echo \"\$LOADED\" | grep -qi \"^\$ext\$\"; then
                 MISSING=\"\$MISSING \$ext\"
               fi
             done
@@ -258,6 +268,16 @@ jobs:
               exit 1
             fi
             echo 'All required extensions are loaded'
+          "
+
+          echo "Testing OPcache..."
+          docker exec "$CONTAINER_ID" php -r "
+            if (extension_loaded('Zend OPcache')) {
+              echo 'OPcache is loaded' . PHP_EOL;
+            } else {
+              echo 'ERROR: OPcache is not loaded' . PHP_EOL;
+              exit(1);
+            }
           "
 
           if [ "$VARIANT" == "production" ]; then
