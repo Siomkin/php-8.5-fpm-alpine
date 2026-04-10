@@ -1,4 +1,4 @@
-FROM php:8.5.4-fpm-alpine
+FROM php:8.5.5-fpm-alpine
 
 ARG TZ=UTC
 ARG INSTALL_XDEBUG=true
