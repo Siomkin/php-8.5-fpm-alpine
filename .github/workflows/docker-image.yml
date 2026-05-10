@@ -5,7 +5,7 @@ on:
     tags:
       - v*
   pull_request:
-    branches: [master]
+    branches: [latest]
   workflow_dispatch:
   schedule:
     - cron: '0 2 * * 1'
@@ -166,7 +166,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}},suffix=${{ matrix.tag_suffix }}
             type=match,pattern=v(.*),group=1,suffix=${{ matrix.tag_suffix }}
-            type=raw,value=latest${{ matrix.tag_suffix }},enable=${{ github.ref == 'refs/heads/master' }}
+            type=raw,value=latest${{ matrix.tag_suffix }},enable=${{ github.ref == 'refs/heads/latest' }}
             type=schedule,pattern={{date 'YYYYMMDD'}},suffix=${{ matrix.tag_suffix }}
           labels: |
             org.opencontainers.image.title=${{ matrix.title }}
